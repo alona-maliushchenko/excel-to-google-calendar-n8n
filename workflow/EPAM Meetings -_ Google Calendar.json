@@ -1,0 +1,309 @@
+{
+  "name": "EPAM Meetings -> Google Calendar",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a5257a3c-b09f-4365-8ab0-c8abbe1c828c",
+      "name": "My workflow"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1nniF27sdFkOvYvL-9vdyGOrrO2ysFWWGWDNXL3Q_DSc/edit?gid=1481362002#gid=1481362002",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "AT_JS ",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "38f9cea0-2f85-4b29-b343-ffac9bd697d0",
+      "name": "Get row(s) in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "Hf3Pua1Hh3ZbbKQf",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "alona.maliushchenko@gmail.com",
+          "mode": "list",
+          "cachedResultName": "alona.maliushchenko@gmail.com"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end }}",
+        "additionalFields": {
+          "allday": "={{ $json.allDay ? 'yes' : 'no' }}",
+          "summary": "={{ $json.summary }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1552,
+        64
+      ],
+      "id": "3fc9daf0-91f3-4262-8a77-069a6cd7d94c",
+      "name": "Create an event",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "tDnvddLHcmIMcQqh",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\n\nlet lastTopic = '';\nlet lastTime = '';\nlet lastTrainer = '';\n\nconst result = [];\n\nfor (const item of rows) {\n  const r = item.json;\n\n  const currentTopic = (r.Topic || '').trim();\n  const dateFormat = (r['Date and format'] || '').trim();\n  const currentTime = (r.Time || '').trim();\n  const currentTrainer = (r.Trainer || '').trim();\n\n  // --------------------------------\n  // TIME\n  // --------------------------------\n\n  if (currentTime) {\n    const timeMatch = currentTime.match(/(\\d{1,2}:\\d{2})/);\n\n    if (timeMatch) {\n      lastTime = timeMatch[1];\n    }\n\n    // Mentor sessions have no fixed time\n    if (\n      currentTime\n        .toLowerCase()\n        .includes('scheduled by the mentor')\n    ) {\n      lastTime = '';\n    }\n  }\n\n  // --------------------------------\n  // TRAINER\n  // --------------------------------\n\n  if (currentTrainer) {\n    lastTrainer = currentTrainer;\n  }\n\n  // --------------------------------\n  // SKIP MODULE HEADERS\n  // --------------------------------\n\n  if (\n    currentTopic === 'JavaScript Module' ||\n    currentTopic === 'AT_JS Module'\n  ) {\n    continue;\n  }\n\n  // --------------------------------\n  // TOPIC IS ACTUALLY A DATE\n  // Example:\n  // 21.10.2026 (Group Interview)\n  // --------------------------------\n\n  const topicIsDate = currentTopic.match(\n    /^\\d{2}\\.\\d{2}\\.\\d{4}\\s*\\([^)]+\\)$/\n  );\n\n  if (topicIsDate) {\n    result.push({\n      json: {\n        Topic: lastTopic,\n        'Date and format': currentTopic,\n        Time: lastTime,\n        Trainer: lastTrainer\n      }\n    });\n\n    continue;\n  }\n\n  // --------------------------------\n  // NEW TOPIC\n  // --------------------------------\n\n  if (currentTopic) {\n    lastTopic = currentTopic;\n  }\n\n  // No date → nothing to add\n  if (!dateFormat) {\n    continue;\n  }\n\n  // --------------------------------\n  // MULTIPLE DATES IN ONE CELL\n  //\n  // Example:\n  // 10.12.2026 (Q&A) 15.12.2026 (Group Interview)\n  // --------------------------------\n\n  const multipleDates = [\n    ...dateFormat.matchAll(\n      /\\d{2}\\.\\d{2}\\.\\d{4}\\s*\\([^)]+\\)/g\n    )\n  ];\n\n  if (multipleDates.length > 1) {\n    for (const match of multipleDates) {\n      result.push({\n        json: {\n          Topic: lastTopic,\n          'Date and format': match[0],\n          Time: lastTime,\n          Trainer: lastTrainer\n        }\n      });\n    }\n\n    continue;\n  }\n\n  // --------------------------------\n  // DATE RANGE WITHOUT FIXED TIME\n  //\n  // Examples:\n  // 02-03.11.2026\n  // 03-09.11.2026\n  //\n  // IMPORTANT:\n  // Time must be EMPTY.\n  // --------------------------------\n\n  const simpleDateRange = dateFormat.match(\n    /^\\d{2}\\s*-\\s*\\d{2}\\.\\d{2}\\.\\d{4}/\n  );\n\n  if (simpleDateRange) {\n    result.push({\n      json: {\n        Topic: lastTopic,\n        'Date and format': dateFormat,\n        Time: '',\n        Trainer: lastTrainer\n      }\n    });\n\n    continue;\n  }\n\n  // --------------------------------\n  // DATE RANGE\n  //\n  // Examples:\n  // 03.11.- 06.11.2026\n  // 09.11.- 13.11.2026\n  // 16.11.- 20.11.2026\n  // 30.11.- 04.12.2026\n  //\n  // These also have NO fixed time.\n  // --------------------------------\n\n  const dateRange = dateFormat.match(\n    /^\\d{2}\\.\\d{2}\\.\\s*-\\s*\\d{2}\\.\\d{2}\\.\\d{4}\\s*\\([^)]+\\)$/\n  );\n\n  if (dateRange) {\n    result.push({\n      json: {\n        Topic: lastTopic,\n        'Date and format': dateRange[0],\n        Time: '',\n        Trainer: lastTrainer\n      }\n    });\n\n    continue;\n  }\n\n  // --------------------------------\n  // NORMAL DATE\n  // --------------------------------\n\n  result.push({\n    json: {\n      Topic: lastTopic,\n      'Date and format': dateFormat,\n      Time: lastTime,\n      Trainer: lastTrainer\n    }\n  });\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "adc760e1-e56d-4eb9-872d-402d3f8d279d",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst result = [];\n\nfunction nextDay(date) {\n  const [y, m, d] = date.split('-').map(Number);\n  const dt = new Date(Date.UTC(y, m - 1, d + 1));\n  return dt.toISOString().slice(0, 10);\n}\n\nfunction daysBetween(start, end) {\n  const days = [];\n  for (let d = start; d <= end; d = nextDay(d)) days.push(d);\n  return days;\n}\n\nfor (const { json } of items) {\n  const topic = json.Topic;\n  const dateText = (json['Date and format'] || '').trim();\n  const time = (json.Time || '').trim();\n\n  const format = (dateText.match(/\\(([^)]+)\\)/) || [])[1];\n  const summary = format ? `${topic} (${format})` : topic;\n\n  // Діапазон: \"03.11.- 06.11.2026\" або \"02-03.11.2026\"\n  let m = dateText.match(/^(\\d{2})\\.(\\d{2})\\.\\s*-\\s*(\\d{2})\\.(\\d{2})\\.(\\d{4})/);\n  let first, last;\n\n  if (m) {\n    first = `${m[5]}-${m[2]}-${m[1]}`;\n    last = `${m[5]}-${m[4]}-${m[3]}`;\n  } else if ((m = dateText.match(/^(\\d{2})\\s*-\\s*(\\d{2})\\.(\\d{2})\\.(\\d{4})/))) {\n    first = `${m[4]}-${m[3]}-${m[1]}`;\n    last = `${m[4]}-${m[3]}-${m[2]}`;\n  }\n\n  if (first) {\n    for (const day of daysBetween(first, last)) {\n      result.push({ json: { summary, start: day, end: nextDay(day), allDay: true } });\n    }\n    continue;\n  }\n\n  // Одна дата\n  const d = dateText.match(/(\\d{2})\\.(\\d{2})\\.(\\d{4})/);\n  if (!d) throw new Error(`Cannot recognize date: ${dateText}`);\n  const date = `${d[3]}-${d[2]}-${d[1]}`;\n\n  if (time) {\n    const [h, min] = time.split(':').map(Number);\n    const pad = n => String(n).padStart(2, '0');\n    const endDate = h + 1 >= 24 ? nextDay(date) : date;\n    result.push({\n      json: {\n        summary,\n        start: `${date}T${time}:00`,\n        end: `${endDate}T${pad((h + 1) % 24)}:${pad(min)}:00`,\n        allDay: false\n      }\n    });\n  } else {\n    result.push({ json: { summary, start: date, end: nextDay(date), allDay: true } });\n  }\n}\n\nreturn result;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "5e2dfc6b-0738-4aae-8755-77446f5a4dfe",
+      "name": "Prepare Calendar Event"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "94a3d867-e38d-4af6-b3d4-2f69dd5d110f",
+              "leftValue": "={{ $json.allDay }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        0
+      ],
+      "id": "eee1e71b-d623-45b9-933b-30bd786b06cc",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "value": "alona.maliushchenko@gmail.com",
+          "mode": "list",
+          "cachedResultName": "alona.maliushchenko@gmail.com"
+        },
+        "returnAll": true,
+        "timeMin": "=2026-09-01T00:00:00",
+        "timeMax": "=2026-12-31T00:00:00",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        896,
+        0
+      ],
+      "id": "7dcad7f6-5d08-4e39-a84c-bebed7225faa",
+      "name": "Get many events",
+      "executeOnce": true,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "tDnvddLHcmIMcQqh",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const existing = $('Get many events').all().map(i => {\n  const s = i.json.start || {};\n  return `${i.json.summary}|${(s.date || s.dateTime || '').slice(0, 10)}`;\n});\n\nreturn $('Prepare Calendar Event').all().filter(i => {\n  const key = `${i.json.summary}|${i.json.start.slice(0, 10)}`;\n  return !existing.includes(key);\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "a7dc6a3a-a18f-4ed7-8e55-b6d823384f81",
+      "name": "Code in JavaScript1",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "alona.maliushchenko@gmail.com",
+          "mode": "list",
+          "cachedResultName": "alona.maliushchenko@gmail.com"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end }}",
+        "additionalFields": {
+          "allday": "yes",
+          "summary": "={{ $json.summary }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1584,
+        -144
+      ],
+      "id": "777c70c1-65fb-4c0b-b128-784d6dcd3bc4",
+      "name": "Create an event1",
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "tDnvddLHcmIMcQqh",
+          "name": "Google Calendar account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "My workflow": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Prepare Calendar Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Calendar Event": {
+      "main": [
+        [
+          {
+            "node": "Get many events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Create an event1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create an event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many events": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "6c9788f1-547e-42e7-8963-65bf719fd11a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "03ab3bc070b3b6bb29f5571e9e83070b33a00371e7adc255cec4a0beebcb986b"
+  },
+  "nodeGroups": [],
+  "id": "yq2ZRIOwBUmEfwUk",
+  "tags": []
+}
